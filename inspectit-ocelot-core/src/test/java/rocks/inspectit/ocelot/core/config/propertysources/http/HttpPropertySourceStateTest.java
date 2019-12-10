@@ -1,5 +1,8 @@
 package rocks.inspectit.ocelot.core.config.propertysources.http;
 
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.Appender;
+import ch.qos.logback.core.read.ListAppender;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.AfterEach;
@@ -7,9 +10,18 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import ch.qos.logback.classic.Logger;
+import org.slf4j.LoggerFactory;
+import ch.qos.logback.classic.Level;
 import org.springframework.core.env.PropertySource;
 import rocks.inspectit.ocelot.config.model.config.HttpConfigSettings;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.is;
+import static org.mockito.Mockito.verify;
 
 import java.io.File;
 import java.io.IOException;
@@ -19,6 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Properties;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
@@ -35,6 +48,9 @@ class HttpPropertySourceStateTest {
     public class Update {
 
         private WireMockServer mockServer;
+
+        @Mock
+        private Appender<ILoggingEvent> mockAppender;
 
         private HttpConfigSettings httpSettings;
 
@@ -79,6 +95,7 @@ class HttpPropertySourceStateTest {
             PropertySource result = state.getCurrentPropertySource();
 
             assertTrue(updateResult);
+            assertTrue(state.getErrorCounter() == 0);
             assertThat(new File(httpSettings.getPersistenceFile())).hasContent(config);
             assertThat(result.getProperty("inspectit.service-name")).isEqualTo("test-name");
         }
@@ -94,6 +111,7 @@ class HttpPropertySourceStateTest {
             PropertySource result = state.getCurrentPropertySource();
 
             assertTrue(updateResult);
+            assertTrue(state.getErrorCounter() == 0);
             assertThat(result.getProperty("inspectit.service-name")).isEqualTo("test-name");
         }
 
@@ -110,6 +128,7 @@ class HttpPropertySourceStateTest {
 
 
             assertTrue(updateResult);
+            assertTrue(state.getErrorCounter() == 0);
             assertThat(new File(httpSettings.getPersistenceFile())).hasContent("");
             assertTrue(source.isEmpty());
         }
@@ -130,10 +149,188 @@ class HttpPropertySourceStateTest {
 
             assertTrue(updateResultFirst);
             assertTrue(updateResultSecond);
+            assertTrue(state.getErrorCounter() == 0);
             assertNotSame(resultFirst, resultSecond);
             assertThat(resultFirst.getProperty("inspectit.service-name")).isEqualTo("test-name");
             assertThat(resultSecond.getProperty("inspectit.service-name")).isEqualTo("test-name");
             assertThat(new File(httpSettings.getPersistenceFile())).hasContent(config);
+        }
+
+        @Test
+        public void testLogFetchError() {
+            mockServer.stubFor(get(urlPathEqualTo("/"))
+                    .willReturn(aResponse()
+                            .withStatus(500)));
+            Logger logger = (Logger) LoggerFactory.getLogger(HttpPropertySourceState.class.getName());
+            // create and start a ListAppender
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+
+            logger.addAppender(listAppender);
+
+            boolean updateResult = state.update(false);
+            PropertySource result = state.getCurrentPropertySource();
+
+            assertFalse(updateResult);
+            assertFalse(state.getErrorCounter() == 0);
+            assertThat(((Properties) result.getSource())).isEmpty();
+            assertThat(new File(httpSettings.getPersistenceFile())).doesNotExist();
+
+            boolean check = false;
+            // JUnit assertions
+            List<ILoggingEvent> logsList = listAppender.list;
+            for (ILoggingEvent log : logsList){
+                if(log.getLevel().equals(Level.ERROR)) {
+                    assertTrue(log.getMessage().contains("A IO problem occurred while fetching configuration."));
+                    check = true;
+                }
+            }
+            assertTrue(check);
+        }
+
+        @Test
+        public void testNumberOfLogs() {
+            mockServer.stubFor(get(urlPathEqualTo("/"))
+                    .willReturn(aResponse()
+                            .withStatus(500)));
+            Logger logger = (Logger) LoggerFactory.getLogger(HttpPropertySourceState.class.getName());
+            // create and start a ListAppender
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+
+            logger.addAppender(listAppender);
+
+            boolean updateResult = state.update(false);
+            updateResult = state.update(false);
+            updateResult = state.update(false);
+            PropertySource result = state.getCurrentPropertySource();
+
+            assertFalse(updateResult);
+            assertTrue(state.getErrorCounter() == 3);
+            assertThat(((Properties) result.getSource())).isEmpty();
+            assertThat(new File(httpSettings.getPersistenceFile())).doesNotExist();
+
+            int check = 0;
+            // JUnit assertions
+            List<ILoggingEvent> logsList = listAppender.list;
+            for (ILoggingEvent log : logsList){
+                if(log.getLevel().equals(Level.ERROR)) {
+                    assertTrue(log.getMessage().contains("A IO problem occurred while fetching configuration."));
+                    check++;
+                }
+            }
+            assertEquals(2, check);
+        }
+
+        @Test
+        public void testLogSuccesFetchAfterError() {
+            mockServer.stubFor(get(urlPathEqualTo("/"))
+                    .willReturn(aResponse()
+                            .withStatus(500)));
+            Logger logger = (Logger) LoggerFactory.getLogger(HttpPropertySourceState.class.getName());
+            // create and start a ListAppender
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+
+            logger.addAppender(listAppender);
+
+            boolean updateResult = state.update(false);
+            PropertySource result = state.getCurrentPropertySource();
+
+            assertFalse(updateResult);
+            assertTrue(state.getErrorCounter() == 1);
+            assertThat(((Properties) result.getSource())).isEmpty();
+            assertThat(new File(httpSettings.getPersistenceFile())).doesNotExist();
+
+            boolean check = false;
+            // JUnit assertions
+            List<ILoggingEvent> logsList = listAppender.list;
+            for (ILoggingEvent log : logsList){
+                if(log.getLevel().equals(Level.ERROR)) {
+                    assertTrue(log.getMessage().contains("A IO problem occurred while fetching configuration."));
+                    check = true;
+                }
+            }
+            assertTrue(check);
+
+            mockServer.stubFor(get(urlPathEqualTo("/"))
+                    .willReturn(aResponse()
+                            .withStatus(200)
+                            .withBody("")));
+
+            updateResult = state.update(false);
+            result = state.getCurrentPropertySource();
+            Properties source = (Properties) result.getSource();
+            assertTrue(updateResult);
+            assertTrue(state.getErrorCounter() == 0);
+            assertThat(new File(httpSettings.getPersistenceFile())).hasContent("");
+            assertTrue(source.isEmpty());
+
+            for (ILoggingEvent log : logsList){
+                if(log.getLevel().equals(Level.INFO)) {
+                    if(log.getMessage().contains("Configuration fetch has been successful after 1 unsuccessful attempts."))
+                        check = true;
+                }
+            }
+            assertTrue(check);
+        }
+
+        @Test
+        public void testLogFetchSuccess() {
+            mockServer.stubFor(get(urlPathEqualTo("/"))
+                    .willReturn(aResponse()
+                            .withStatus(200)
+                            .withBody("")));
+
+            Logger logger = (Logger) LoggerFactory.getLogger(HttpPropertySourceState.class.getName());
+            // create and start a ListAppender
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+
+            logger.addAppender(listAppender);
+
+            boolean updateResult = state.update(false);
+            PropertySource result = state.getCurrentPropertySource();
+            Properties source = (Properties) result.getSource();
+
+            assertTrue(updateResult);
+            assertTrue(state.getErrorCounter() == 0);
+            assertThat(new File(httpSettings.getPersistenceFile())).hasContent("");
+            assertTrue(source.isEmpty());
+
+            boolean check = true;
+            // JUnit assertions
+            List<ILoggingEvent> logsList = listAppender.list;
+            for (ILoggingEvent log : logsList){
+                if(log.getLevel().equals(Level.ERROR)) {
+                    assertTrue(log.getMessage().contains("A IO problem occurred while fetching configuration."));
+                    check = false;
+                }
+            }
+            assertTrue(check);
+        }
+
+        @Test
+        public void testLogFetchCounter() {
+            mockServer.stubFor(get(urlPathEqualTo("/"))
+                    .willReturn(aResponse()
+                            .withStatus(500)));
+            Logger logger = (Logger) LoggerFactory.getLogger(HttpPropertySourceState.class.getName());
+            // create and start a ListAppender
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+
+            logger.addAppender(listAppender);
+
+            boolean updateResult = state.update(false);
+            updateResult = state.update(false);
+            updateResult = state.update(false);
+            PropertySource result = state.getCurrentPropertySource();
+
+            assertFalse(updateResult);
+            assertTrue(state.getErrorCounter() == 3);
+            assertThat(((Properties) result.getSource())).isEmpty();
+            assertThat(new File(httpSettings.getPersistenceFile())).doesNotExist();
         }
 
         @Test
@@ -157,6 +354,7 @@ class HttpPropertySourceStateTest {
 
             assertTrue(updateResultFirst);
             assertFalse(updateResultSecond);
+            assertTrue(state.getErrorCounter() == 0);
             assertSame(resultFirst, resultSecond);
             assertThat(resultFirst.getProperty("inspectit.service-name")).isEqualTo("test-name");
             assertThat(new File(httpSettings.getPersistenceFile())).hasContent(config);
@@ -183,6 +381,7 @@ class HttpPropertySourceStateTest {
 
             assertTrue(updateResultFirst);
             assertFalse(updateResultSecond);
+            assertTrue(state.getErrorCounter() == 0);
             assertSame(resultFirst, resultSecond);
             assertThat(resultFirst.getProperty("inspectit.service-name")).isEqualTo("test-name");
             assertThat(new File(httpSettings.getPersistenceFile())).hasContent(config);
@@ -200,6 +399,7 @@ class HttpPropertySourceStateTest {
             PropertySource result = state.getCurrentPropertySource();
 
             assertFalse(updateResult);
+            assertFalse(state.getErrorCounter() == 0);
             assertThat(((Properties) result.getSource())).isEmpty();
             assertThat(new File(httpSettings.getPersistenceFile())).hasContent("test: testvalue");
         }
@@ -216,10 +416,10 @@ class HttpPropertySourceStateTest {
             PropertySource result = state.getCurrentPropertySource();
 
             assertTrue(updateResult);
+            assertFalse(state.getErrorCounter() == 0);
             assertThat(result.getProperty("test")).isEqualTo("testvalue");
             assertThat(new File(httpSettings.getPersistenceFile())).hasContent("test: testvalue");
         }
-
 
         @Test
         public void serverReturnsErrorWithoutFallbackFile() throws IOException {
@@ -231,6 +431,7 @@ class HttpPropertySourceStateTest {
             PropertySource result = state.getCurrentPropertySource();
 
             assertFalse(updateResult);
+            assertFalse(state.getErrorCounter() == 0);
             assertThat(((Properties) result.getSource())).isEmpty();
             assertThat(new File(httpSettings.getPersistenceFile())).doesNotExist();
         }

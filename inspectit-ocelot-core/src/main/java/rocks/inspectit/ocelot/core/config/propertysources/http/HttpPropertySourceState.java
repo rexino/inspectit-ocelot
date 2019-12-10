@@ -70,6 +70,7 @@ public class HttpPropertySourceState {
     /**
      * Number of unsuccessful connection attempts.
      */
+    @Getter
     private int errorCounter;
 
     /**
@@ -209,7 +210,7 @@ public class HttpPropertySourceState {
      * @param message error message to log
      * @param exception exception that occurred when trying to fetch a configuration
      */
-    private void logFetchError(String message, Exception exception) {
+    public void logFetchError(String message, Exception exception) {
         errorCounter++;
         //check if errorCounter is a power of 2
         if (((errorCounter & (errorCounter - 1)) == 0)) {

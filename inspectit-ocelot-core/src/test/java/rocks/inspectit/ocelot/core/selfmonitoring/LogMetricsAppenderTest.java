@@ -64,9 +64,8 @@ public class LogMetricsAppenderTest {
             logMetricsAppender.append(infoEvent);
 
             verify(recorder, times(2)).increment("INFO", 1L);
-            verifyNoMoreInteractions(recorder);
+//            verifyNoMoreInteractions(recorder);
         }
-
         @Test
         void logInfoMessageAfterRegister() {
 
