@@ -11,6 +11,7 @@ import io.opencensus.proto.agent.metrics.v1.ExportMetricsServiceRequest;
 import io.opencensus.proto.agent.metrics.v1.ExportMetricsServiceResponse;
 import io.opencensus.proto.agent.metrics.v1.MetricsServiceGrpc;
 import io.opencensus.stats.*;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.springframework.beans.factory.annotation.Autowired;

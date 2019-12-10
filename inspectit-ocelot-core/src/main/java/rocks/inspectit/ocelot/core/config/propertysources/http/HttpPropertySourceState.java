@@ -68,6 +68,12 @@ public class HttpPropertySourceState {
     private PropertySource currentPropertySource;
 
     /**
+     * Number of unsuccessful connection attempts.
+     */
+    @Getter
+    private int errorCounter;
+
+    /**
      * Constructor.
      *
      * @param name            the name used for the property source
@@ -76,6 +82,7 @@ public class HttpPropertySourceState {
     public HttpPropertySourceState(String name, HttpConfigSettings currentSettings) {
         this.name = name;
         this.currentSettings = currentSettings;
+        this.errorCounter = 0;
         //ensure that currentPropertySource is never null, even if the initial fetching fails
         currentPropertySource = new PropertiesPropertySource(name, new Properties());
     }
@@ -174,12 +181,16 @@ public class HttpPropertySourceState {
             HttpResponse response = createHttpClient().execute(httpGet);
             configuration = processHttpResponse(response);
             isError = false;
+            if (errorCounter != 0) {
+                log.info("Configuration fetch has been successful after {} unsuccessful attempts.", errorCounter);
+                errorCounter = 0;
+            }
         } catch (ClientProtocolException e) {
-            log.error("HTTP protocol error occurred while fetching configuration.", e);
+            logFetchError("HTTP protocol error occurred while fetching configuration.", e);
         } catch (IOException e) {
-            log.error("A IO problem occurred while fetching configuration.", e);
+            logFetchError("A IO problem occurred while fetching configuration.", e);
         } catch (Exception e) {
-            log.error("Exception occurred while fetching configuration.", e);
+            logFetchError("Exception occurred while fetching configuration.", e);
         } finally {
             httpGet.releaseConnection();
         }
@@ -191,6 +202,20 @@ public class HttpPropertySourceState {
         }
 
         return configuration;
+    }
+
+    /**
+     * Increments the errorCounter and prints ERROR log if the errorCounter is power of two
+     *
+     * @param message error message to log
+     * @param exception exception that occurred when trying to fetch a configuration
+     */
+    public void logFetchError(String message, Exception exception) {
+        errorCounter++;
+        //check if errorCounter is a power of 2
+        if (((errorCounter & (errorCounter - 1)) == 0)) {
+            log.error(message, exception);
+        }
     }
 
     /**
